@@ -1,0 +1,29 @@
+# Training and evaluation config
+epochs: 10
+stopping_step: 3
+train_batch_size: 512
+eval_batch_size: 1024
+train_neg_sample_args:
+    distribution: uniform
+    sample_num: 1
+    alpha: 1.0
+    dynamic: False
+    candidate_num: 0
+eval_args:
+    group_by: user
+    order: RO
+    split: {'RS': [0.8,0.1,0.1]}
+    mode: {'valid': 'uni100', 'test': 'uni100'}
+metrics: ['MRR','NDCG', 'Precision']
+topk: 10
+valid_metric: MRR@10
+metric_decimal_place: 4
+
+# Sampling config
+sampling:
+    enabled: True
+    n_samples: 3
+    random_seed: 42
+    target_interactions: 80000
+    min_items_per_user: 4  # Al menos x items por usuario
+    min_total_items: 10     # Al menos x items en total
