@@ -1,0 +1,14 @@
+# Training and evaluation config
+epochs: 10
+stopping_step: 3
+train_batch_size: 512
+eval_batch_size: 1024
+eval_args:
+    group_by: null
+    order: RO
+    split: {'RS': [0.8,0.1,0.1]}
+    mode: uni100
+metrics: ['RMSE']
+valid_metric: RMSE
+valid_metric_bigger: False
+metric_decimal_place: 4

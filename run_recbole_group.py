@@ -6,10 +6,14 @@
 import argparse
 from recbole.quick_start import run
 from recbole.utils import list_to_latex
+from recbole.config import Config
+from recbole.utils import list_to_latex, init_seed, get_model, get_trainer
+from recbole.data import create_dataset, data_preparation
 import yaml
 import torch
 import gc
 import pandas as pd
+import traceback
 
 def load_sampling_config(config_files):
     """Cargar configuracion de muestreo desde archivos YAML"""
@@ -98,29 +102,75 @@ def run_group_benchmark(model_list, dataset, config_file_list, output_suffix="",
             valid_res_dict = {"Model": model, "Sample": sample_idx+1}
             test_res_dict = {"Model": model, "Sample": sample_idx+1}
             try:
-                result = run(
-                    model,
-                    dataset_to_use,
+                # Cargar configuracion
+                config = Config(
+                    model=model,
+                    dataset=dataset_to_use,
                     config_file_list=config_file_list,
-                    config_dict=sample_config_dict,
-                    nproc=nproc,
-                    world_size=world_size,
-                    ip=ip,
-                    port=port,
-                    group_offset=group_offset,
-                    saved=False
+                    config_dict=sample_config_dict
                 )
-                valid_res_dict.update(result["best_valid_result"])
-                test_res_dict.update(result["test_result"])
-                bigger_flag = result["valid_score_bigger"]
-                subset_columns = list(result["best_valid_result"].keys())
+                init_seed(config['seed'], config['reproducibility'])
+                # Preparar datos
+                dataset_obj = create_dataset(config)
+                train_data, valid_data, test_data = data_preparation(config, dataset_obj)
+                # Iniciar modelo
+                model_obj = get_model(config['model'])(config, train_data.dataset).to(config['device'])
+                # Iniciar Trainer
+                trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model_obj)
+                # Entrenar
+                best_valid_score, best_valid_result = trainer.fit(
+                    train_data, valid_data, saved=True, show_progress=True
+                )
+                # Evaluar: Metricas de ranking
+                test_result_ranking = trainer.evaluate(test_data, load_best_model=True, show_progress=True)
+                # Evaluar : Metricas de Valor (RMSE)
+                with open('test_rmse.yaml', 'r') as f:
+                        rmse_yaml_config = yaml.safe_load(f)
+                # Combinamos la config de muestreo actual con la de RMSE
+                rmse_config_dict = sample_config_dict.copy()
+                rmse_config_dict.update(rmse_yaml_config)
+                if 'eval_args' not in rmse_config_dict:
+                        rmse_config_dict['eval_args'] = config['eval_args'].copy()
+                rmse_config_dict['eval_args'].update({
+                        'group_by': None,      
+                        'order': 'RO',        
+                        'mode': 'uni100'       
+                    })
+                rmse_config_dict['metrics'] = ['RMSE']
+                # Crear NUEVOS objetos Config y Dataset para RMSE
+                config_rmse = Config(
+                    model=model,
+                    dataset=dataset_to_use,
+                    config_file_list=config_file_list,
+                    config_dict=rmse_config_dict
+                )
+                # Reiniciar semilla
+                init_seed(config_rmse['seed'], config_rmse['reproducibility'])
+                # Crear dataset limpio y dataloaders
+                dataset_rmse = create_dataset(config_rmse)
+                _, _, test_data_rmse = data_preparation(config_rmse, dataset_rmse)
+                trainer_rmse = get_trainer(config_rmse['MODEL_TYPE'], config_rmse['model'])(config_rmse, model_obj)
+                test_result_rmse = trainer_rmse.evaluate(test_data_rmse, load_best_model=False, show_progress=True)
+                print(f"    RMSE: Result: {test_result_rmse}")
+                # Combinar resultados de ranking y RMSE
+                final_test_result = test_result_ranking.copy()
+                final_test_result.update(test_result_rmse)
+
+                valid_res_dict.update(best_valid_result)
+                test_res_dict.update(final_test_result)
+                bigger_flag = config['valid_metric_bigger']
+
+                # Actualizar columnas de métricas
+                subset_columns = list(best_valid_result.keys())
+                for k in final_test_result.keys():
+                    if k not in subset_columns:
+                        subset_columns.append(k)
 
                 model_valid_results.append(valid_res_dict)
                 model_test_results.append(test_res_dict)
 
             except Exception as e:
                 print(f"ERROR with model {model}, sample {sample_idx+1}: {e}")
-                import traceback
                 traceback.print_exc()
                 continue
 
@@ -163,15 +213,23 @@ def run_group_benchmark(model_list, dataset, config_file_list, output_suffix="",
         avg_valid_list = [res for res in valid_result_list if res.get('Sample') == 'Average']
         avg_test_list = [res for res in test_result_list if res.get('Sample') == 'Average']
         if avg_valid_list:
+            # Filtrar columnas para validación
+            valid_keys = set().union(*(d.keys() for d in avg_valid_list))
+            valid_subset = [col for col in subset_columns if col in valid_keys]
+
             df_valid, tex_valid = list_to_latex(
                 convert_list=avg_valid_list,
                 bigger_flag=bigger_flag,
-                subset_columns=subset_columns,
+                subset_columns=valid_subset,
             )
+            # Filtrar columnas para test
+            test_keys = set().union(*(d.keys() for d in avg_test_list))
+            test_subset = [col for col in subset_columns if col in test_keys]
+
             df_test, tex_test = list_to_latex(
                 convert_list=avg_test_list,
                 bigger_flag=bigger_flag,
-                subset_columns=subset_columns,
+                subset_columns=test_subset,
             )
 
             with open(valid_file, "w") as f:
