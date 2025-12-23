@@ -24,6 +24,6 @@ sampling:
     enabled: True
     n_samples: 3
     random_seed: 42
-    target_interactions: 80000
+    target_interactions: 100000
     min_items_per_user: 4  # Al menos x items por usuario
     min_total_items: 10     # Al menos x items en total

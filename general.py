@@ -120,7 +120,7 @@ def load_sampling_config(config_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run benchmark')
     parser.add_argument('--dataset', type=str, default='ml-100k', help='Dataset name')
-    parser.add_argument('--config', type=str, default='test_dense.yaml', help='Config file path')
+    parser.add_argument('--config', type=str, default='test.yaml', help='Config file path')
     args = parser.parse_args()
 
     dataset_name = args.dataset
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     sampling_config = load_sampling_config(config_file)
 
     # Split models into groups
-    group_size = 5
+    group_size = 2
     model_groups = [general_models[i:i + group_size] for i in range(0, len(general_models), group_size)]
     times = []
 
