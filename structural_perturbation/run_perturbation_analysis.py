@@ -14,12 +14,12 @@ def load_and_prepare_data(filepath):
         'user_id:token': 'user_id',
         'item_id:token': 'item_id',
         'rating:float': 'rating',
-        'timestamp:float': 'timestamp'
+        'timestamp:float': 'timestamp',
     }
     df.rename(columns=rename_map, inplace=True)
     
     # Asegurarse de que las columnas requeridas existan
-    required_cols = ['user_id', 'item_id', 'rating', 'timestamp']
+    required_cols = ['user_id', 'item_id', 'rating']
     for col in required_cols:
         if col not in df.columns:
             raise ValueError(f"La columna requerida '{col}' no se encuentra en {filepath}")
@@ -47,7 +47,7 @@ def main():
     n_iterations = 5     # Promediar sobre 5 ejecuciones
     n_components = 50    # Usar 50 factores latentes
     alpha = 0.7          # 70% perturbación de valor, 30% estructural
-    time_sampling = True # Ponderar ratings más nuevos en el muestreo
+    #time_sampling = True # Ponderar ratings más nuevos en el muestreo
     
     results_list = []   
 
@@ -59,7 +59,9 @@ def main():
         try:
             # Cargar y preparar los datos
             df = load_and_prepare_data(filepath)
-
+            time_sampling = 'timestamp' in df.columns
+            if not time_sampling:
+                print("  -> Aviso: No se encontró columna 'timestamp'. Usando muestreo uniforme.")
             # Ejecutar el análisis de perturbación estructural
             rmse, std_rmse, s_distance, std_s_distance, rmse_svd, std_rmse_svd = \
                 analytical_structural_perturbation_v2(

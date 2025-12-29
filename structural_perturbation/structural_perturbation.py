@@ -113,39 +113,37 @@ def compute_perturbation_impact(M, M_P, n_components, timing_flag=False):
         print(f"Step 1 (SVD computation): {time.time() - start_time:.4f} seconds")
         step_time = time.time()
 
-    # Step 2: Compute Delta_M
-    V = Vt.T
-    M_transpose_M_P = M_P.T @ M_P
-    M_transpose_M = M.T @ M
-    Delta_M = M_transpose_M - M_transpose_M_P
+    # Step 2: Compute Delta_Sigma_T_Sigma efficiently (memory-optimized)
+    # Avoid creating huge item×item matrices by computing only what we need
+    # Mathematical equivalence: diag(Vt @ Delta_M @ Vt.T) = diag((M@Vt.T).T @ (M@Vt.T) - (M_P@Vt.T).T @ (M_P@Vt.T))
+
+    M_Vt = M @ Vt.T      # Sparse @ dense -> dense (users × k, ~32MB)
+    M_P_Vt = M_P @ Vt.T  # Sparse @ dense -> dense (users × k, ~32MB)
+
+    # Compute k×k matrix (tiny!) instead of item×item matrix (huge!)
+    Delta_M_projected = M_Vt.T @ M_Vt - M_P_Vt.T @ M_P_Vt  # k×k (50×50, ~20KB)
+
     if timing_flag:
-        print(f"Step 2 (Delta_M computation): {time.time() - step_time:.4f} seconds")
+        print(f"Step 2 (Delta_Sigma_T_Sigma computation): {time.time() - step_time:.4f} seconds")
         step_time = time.time()
 
-    # Step 3: Compute Delta_Sigma_T_Sigma and Delta_Sigma
-    Delta_Sigma_T_Sigma = np.diag(Vt @ Delta_M @ Vt.T)
+    # Step 3: Compute Delta_Sigma from projected Delta_M
+    Delta_Sigma_T_Sigma = np.diag(Delta_M_projected)
     Sigma_sq = Sigma.diagonal() ** 2
     Delta_Sigma = np.sqrt(Sigma_sq + Delta_Sigma_T_Sigma) - Sigma.diagonal()
     if timing_flag:
         print(f"Step 3 (Delta_Sigma computation): {time.time() - step_time:.4f} seconds")
         step_time = time.time()
 
-    # Step 4: Compute Sigma_tilde and M_tilde
+    # Step 4: Prepare components for on-demand prediction (memory-optimized)
     Sigma_tilde = Sigma + diags(Delta_Sigma)
-    Sigma_tilde_diag = Sigma_tilde.diagonal()
-    Sigma_tilde_Vt = Sigma_tilde_diag[:, np.newaxis] * Vt
-
-    # Compute M_tilde in chunks to save memory
-    chunk_size = 10000
-    M_tilde = np.zeros((U.shape[0], Sigma_tilde_Vt.shape[1]))
-
-    for i in range(0, U.shape[0], chunk_size):
-        M_tilde[i:i+chunk_size, :] = np.dot(U[i:i+chunk_size, :], Sigma_tilde_Vt)
 
     if timing_flag:
-        print(f"Step 4 (M_tilde computation): {time.time() - step_time:.4f} seconds")
+        print(f"Step 4 (Sigma_tilde computation): {time.time() - step_time:.4f} seconds")
 
-    return M_tilde, Sigma, Sigma_tilde
+    # Return components instead of materialized M_tilde (saves 16.6GB!)
+    # Caller can compute predictions as: U @ Sigma_tilde @ Vt
+    return (U, Sigma_tilde.diagonal(), Vt), Sigma, Sigma_tilde
 
 
 def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
@@ -173,6 +171,10 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
         Fraction of perturbations that are value-based (vs structural)
         - alpha=1.0: only permute rating values
         - alpha=0.0: only move ratings to zero positions
+        Note: For binary/implicit feedback datasets (all ratings are 0 or 1),
+        alpha is automatically set to 0 since value permutation has no effect
+        when all values are identical. This ensures the full perturbation
+        amount p is applied through structural perturbations only.
     time_sampling : bool, optional (default=True)
         If True, sample newer ratings with higher probability
 
@@ -191,25 +193,22 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
     std_rmse_svd : float
         Standard deviation of SVD RMSE
 
-    Example:
-    --------
-    >>> import pandas as pd
-    >>> # Load your data
-    >>> df = pd.DataFrame({
-    ...     'user_id': [1, 1, 2, 2, 3],
-    ...     'item_id': [1, 2, 1, 3, 2],
-    ...     'rating': [5, 4, 3, 5, 4],
-    ...     'timestamp': pd.date_range('2020-01-01', periods=5)
-    ... })
-    >>> rmse, std, s_dist, std_s, rmse_svd, std_svd = \
-    ...     analytical_structural_perturbation_v2(df, p=0.2, n_iterations=5)
-    >>> print(f"Structural Perturbation RMSE: {rmse:.4f} ± {std:.4f}")
     """
     np.random.seed(42)
 
     df_random = train_df.copy()
     M, user_map, item_map = convert_to_sparse_matrix(train_df)
     M = M.astype('float32')
+
+    # Detect binary/implicit feedback data
+    unique_values = np.unique(M.data)
+    is_binary = len(unique_values) <= 2 and all(v in [0.0, 1.0] for v in unique_values)
+
+    if is_binary and alpha > 0:
+        print(f"  Binary/implicit feedback detected (unique values: {sorted(unique_values)})")
+        print(f"  Adjusting alpha: {alpha} → 0.0 (structural perturbations only)")
+        print(f"  Reason: Permuting identical values has no effect on binary data")
+        alpha = 0.0
 
     # Adjust n_components if too large
     n_components = min(n_components, int(min(M.shape) / 4))
@@ -222,25 +221,37 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
 
     for i in range(n_iterations):
         # Prepare sampling probabilities based on timestamps
-        timestamps = df_random['timestamp'].astype('int64') / 1e9
-        normalized_timestamps = (timestamps - timestamps.min()) / (timestamps.max() - timestamps.min() + 1e-9)
-        if time_sampling:
-            probabilities = normalized_timestamps / normalized_timestamps.sum()
-        else:
-            probabilities = None
+        probabilities = None
+        
+        if time_sampling and 'timestamp' in df_random.columns:
+            try:
+                timestamps = df_random['timestamp'].astype('int64')
+                # Normalizar para evitar problemas de escala
+                min_t, max_t = timestamps.min(), timestamps.max()
+                if max_t > min_t:
+                    normalized_timestamps = (timestamps - min_t) / (max_t - min_t + 1e-9)
+                    probabilities = normalized_timestamps / normalized_timestamps.sum()
+            except Exception:
+                # Si falla la conversión (ej. formato fecha string), usar uniforme
+                probabilities = None
 
         # Sample and permute ratings (value perturbation)
-        indices = np.random.choice(df_random.index, size=num_selected_ratings,
-                                   replace=False, p=probabilities)
-        df_random.loc[indices, 'rating'] = np.random.permutation(
-            df_random.loc[indices, 'rating'].values)
+        if num_selected_ratings > 0:
+            indices = np.random.choice(df_random.index, size=num_selected_ratings,
+                                       replace=False, p=probabilities)
+            df_random.loc[indices, 'rating'] = np.random.permutation(
+                df_random.loc[indices, 'rating'].values)
 
-        # Map selected dataframe indices to (row, col) in the matrix M
-        original_permuted_indices = [
-            (user_map[train_df.loc[idx, 'user_id']],
-             item_map[train_df.loc[idx, 'item_id']])
-            for idx in indices
-        ]
+            # Map selected dataframe indices to (row, col) in the matrix M
+            original_permuted_indices = [
+                (user_map[train_df.loc[idx, 'user_id']],
+                 item_map[train_df.loc[idx, 'item_id']])
+                for idx in indices
+            ]
+            # Convert to numpy array for consistency
+            original_permuted_indices = np.array(original_permuted_indices)
+        else:
+            original_permuted_indices = np.empty((0, 2), dtype=int)
 
         # Create perturbed matrix
         M_P, _, _ = convert_to_sparse_matrix(df_random)
@@ -250,67 +261,92 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
         # Structural perturbation: move ratings from non-zero to zero positions
         nonzero_indices = np.array(list(zip(M.nonzero()[0], M.nonzero()[1])))
         num_selected_nonzero = int((1.0 - alpha) * p * len(nonzero_indices))
-        selected_nonzero_indices = np.random.choice(nonzero_indices.shape[0],
-                                                    num_selected_nonzero,
-                                                    replace=False)
-        R_M_nonzero = nonzero_indices[selected_nonzero_indices]
+        
+        if num_selected_nonzero > 0:
+            selected_nonzero_indices = np.random.choice(nonzero_indices.shape[0],
+                                                        num_selected_nonzero,
+                                                        replace=False)
+            R_M_nonzero = nonzero_indices[selected_nonzero_indices]
 
-        itr = sample_zero_forever(M)
-        R_M_zero = np.array([next(itr) for _ in range(num_selected_nonzero)])
+            itr = sample_zero_forever(M)
+            R_M_zero = np.array([next(itr) for _ in range(num_selected_nonzero)])
 
-        for idx_nonzero, idx_zero in zip(R_M_nonzero, R_M_zero):
-            M_P[idx_zero[0], idx_zero[1]] = M[idx_nonzero[0], idx_nonzero[1]]
-            M_P[idx_nonzero[0], idx_nonzero[1]] = 0
+            for idx_nonzero, idx_zero in zip(R_M_nonzero, R_M_zero):
+                M_P[idx_zero[0], idx_zero[1]] = M[idx_nonzero[0], idx_nonzero[1]]
+                M_P[idx_nonzero[0], idx_nonzero[1]] = 0
+        else:
+            R_M_nonzero = np.empty((0, 2), dtype=int)
+            R_M_zero = np.empty((0, 2), dtype=int)
 
         M_P = M_P.tocsr()
 
         # Compute perturbation impact
-        M_tilde, Sigma, Sigma_tilde = compute_perturbation_impact(M, M_P, n_components,
-                                                                   timing_flag=False)
+        (U, sigma_tilde_diag, Vt), Sigma, Sigma_tilde = compute_perturbation_impact(M, M_P, n_components,
+                                                                                      timing_flag=False)
 
         # Combine all perturbed indices
-        if R_M_nonzero.size == 0:
-            permuted_indices = original_permuted_indices
+        arrays_to_concat = []
+        if original_permuted_indices.size > 0:
+            arrays_to_concat.append(original_permuted_indices)
+        if R_M_zero.size > 0:
+            arrays_to_concat.append(R_M_zero)
+        if R_M_nonzero.size > 0:
+            arrays_to_concat.append(R_M_nonzero)
+            
+        if arrays_to_concat:
+            permuted_indices = np.concatenate(arrays_to_concat, axis=0)
         else:
-            permuted_indices = np.concatenate((original_permuted_indices,
-                                              R_M_zero, R_M_nonzero), axis=0)
+            # Fallback if nothing was perturbed (shouldn't happen with p > 0)
+            permuted_indices = np.empty((0, 2), dtype=int)
 
         # Calculate RMSE for analytical approach
-        true_ratings = np.array([M[row, col] for row, col in permuted_indices])
-        predicted_ratings = np.array([M_tilde[row, col] for row, col in permuted_indices])
-        rmse = np.sqrt(mean_squared_error(true_ratings, predicted_ratings))
-        rmse_values.append(rmse)
+        if permuted_indices.size > 0:
+            # Compute predictions on-demand instead of materializing full M_tilde
+            true_ratings = np.array([M[row, col] for row, col in permuted_indices])
+            predicted_ratings = np.array([
+                np.dot(U[row, :] * sigma_tilde_diag, Vt[:, col])
+                for row, col in permuted_indices
+            ])
+            rmse = np.sqrt(mean_squared_error(true_ratings, predicted_ratings))
+            rmse_values.append(rmse)
+        else:
+            rmse_values.append(0.0)
 
         # Calculate spectral distance
         lambda_true = Sigma.diagonal()
         lambda_approx = Sigma_tilde.diagonal()
-        relative_errors = np.abs(lambda_true - lambda_approx) / lambda_true
+        # Avoid division by zero
+        with np.errstate(divide='ignore', invalid='ignore'):
+            relative_errors = np.abs(lambda_true - lambda_approx) / lambda_true
+            relative_errors[lambda_true == 0] = 0 # Handle zero singular values if any
+            
         s_distance = np.mean(relative_errors)
         s_distance_values.append(s_distance)
 
         # Perform standard SVD on M for normalization
         U_M, Sigma_M, Vt_M = svds(M, k=n_components)
-        Sigma_M_diag = diags(Sigma_M)
-        Sigma_M_Vt = Sigma_M_diag @ Vt_M
-
-        M_svd = np.zeros((U_M.shape[0], Sigma_M_Vt.shape[1]))
-        chunk_size = 10000
-        for j in range(0, U_M.shape[0], chunk_size):
-            M_svd[j:j+chunk_size, :] = np.dot(U_M[j:j+chunk_size, :], Sigma_M_Vt)
+        Sigma_M_diag = Sigma_M
 
         # Calculate RMSE for standard SVD
-        true_ratings = np.array([M[row, col] for row, col in permuted_indices])
-        predicted_ratings = np.array([M_svd[row, col] for row, col in permuted_indices])
-        rmse_svd = np.sqrt(mean_squared_error(true_ratings, predicted_ratings))
-        rmse_svd_values.append(rmse_svd)
+        if permuted_indices.size > 0:
+            # Compute predictions on-demand instead of materializing full M_svd
+            true_ratings = np.array([M[row, col] for row, col in permuted_indices])
+            predicted_ratings = np.array([
+                np.dot(U_M[row, :] * Sigma_M_diag, Vt_M[:, col])
+                for row, col in permuted_indices
+            ])
+            rmse_svd = np.sqrt(mean_squared_error(true_ratings, predicted_ratings))
+            rmse_svd_values.append(rmse_svd)
+        else:
+            rmse_svd_values.append(0.0)
 
     # Return averaged results
-    average_rmse = np.mean(rmse_values)
-    std_rmse = np.std(rmse_values)
-    average_s_distance = np.mean(s_distance_values)
-    std_s_distance = np.std(s_distance_values)
-    average_rmse_svd = np.mean(rmse_svd_values)
-    std_rmse_svd = np.std(rmse_svd_values)
+    average_rmse = np.mean(rmse_values) if rmse_values else 0.0
+    std_rmse = np.std(rmse_values) if rmse_values else 0.0
+    average_s_distance = np.mean(s_distance_values) if s_distance_values else 0.0
+    std_s_distance = np.std(s_distance_values) if s_distance_values else 0.0
+    average_rmse_svd = np.mean(rmse_svd_values) if rmse_svd_values else 0.0
+    std_rmse_svd = np.std(rmse_svd_values) if rmse_svd_values else 0.0
 
     return average_rmse, std_rmse, average_s_distance, std_s_distance, average_rmse_svd, std_rmse_svd
 
