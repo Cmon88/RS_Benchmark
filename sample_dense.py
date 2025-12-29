@@ -33,18 +33,28 @@ def create_interaction_based_subsamples(dataset_name, target_interactions, n_sam
         print(f"\n--- Creating sample {i+1}/{n_samples} ---")
         seed = base_seed + i
         np.random.seed(seed)
+
+        df_work = df.copy()
+
+        # 0. Filtro de Saturación
+        total_items_global = df['item_id:token'].nunique()
+        items_per_user = df_work.groupby('user_id:token')['item_id:token'].nunique()
+        saturated_users_ids = items_per_user[items_per_user >= (total_items_global * 0.95)].index
+        if len(saturated_users_ids) > 0:
+            print(f"  Excluding {len(saturated_users_ids)} saturated users.")
+            df_work = df_work[~df_work['user_id:token'].isin(saturated_users_ids)]
         
-        # 1. Filtrar usuarios "fríos" primero (necesitamos usuarios útiles)
-        user_counts = df['user_id:token'].value_counts()
+        # 1. Filtrar usuarios "fríos" (Usamos df_clean en lugar de df)
+        user_counts = df_work['user_id:token'].value_counts()
         valid_candidates = user_counts[user_counts >= min_items_per_user].index
-        df_candidates = df[df['user_id:token'].isin(valid_candidates)]
+        df_candidates = df_work[df_work['user_id:token'].isin(valid_candidates)]
         
         # Recalcular promedio sobre candidatos válidos para mejor estimación
         avg_valid = len(df_candidates) / df_candidates['user_id:token'].nunique()
         
         # 2. Estimación inicial de usuarios necesarios
         # Añadimos un factor de seguridad (1.1) porque al filtrar items después, perderemos interacciones
-        estimated_users = int((target_interactions / avg_valid) * 1.1)
+        estimated_users = int((target_interactions / avg_valid) * 2.0)
         
         # Límite de seguridad
         max_users = df_candidates['user_id:token'].nunique()
@@ -67,22 +77,82 @@ def create_interaction_based_subsamples(dataset_name, target_interactions, n_sam
         item_counts = df_sample['item_id:token'].value_counts()
         valid_items = item_counts[item_counts >= min_item_support].index
         df_sample = df_sample[df_sample['item_id:token'].isin(valid_items)]
+
+        # Verificar si algún usuario ha interactuado con TODOS los items disponibles
+        df_injection = pd.DataFrame()
+
+        current_items_set = set(df_sample['item_id:token'].unique())
+        n_items_current = len(current_items_set)
         
+        user_inter_counts = df_sample['user_id:token'].value_counts()
+        max_inter_user = user_inter_counts.max()
+        # Necesitamos al menos 1 item negativo, idealmente más.
+        if max_inter_user >= n_items_current:
+            print("  Injecting random items to allow negative sampling...")
+            # Queremos que n_items > max_inter_user. Digamos un margen del 10% o al menos 5 items.
+            needed_total = int(max_inter_user * 1.1) + 5
+            needed_new = needed_total - n_items_current
+            # Buscamos items en el dataset original que NO estén en el sample actual
+            all_original_items = set(df['item_id:token'].unique())
+            available_to_add = list(all_original_items - current_items_set)
+            
+            if len(available_to_add) > 0:
+                # Añadir interacciones reales de estos items nuevos
+                items_to_inject = np.random.choice(available_to_add, min(len(available_to_add), needed_new), replace=False)
+                
+                # INTENTO 1: Buscar en usuarios ya seleccionados (Ideal para no inflar usuarios)
+                df_injection_found = df[
+                    df['item_id:token'].isin(items_to_inject) & 
+                    df['user_id:token'].isin(df_sample['user_id:token'].unique())
+                ]
+                
+                # INTENTO 2: Si falla, traer interacciones de CUALQUIER usuario (Necesario para salvar el dataset)
+                if len(df_injection_found) == 0:
+                    print("  No interactions found in current users. Fetching from external users...")
+                    # Tomamos 1 interacción por cada item nuevo para garantizar su existencia
+                    # Esto traerá unos pocos usuarios nuevos, pero es un mal menor
+                    df_injection_found = pd.DataFrame()
+                    for item in items_to_inject:
+                        item_inters = df[df['item_id:token'] == item]
+                        if len(item_inters) > 0:
+                            # Tomamos 1 interacción aleatoria de este item
+                            df_injection_found = pd.concat([df_injection_found, item_inters.sample(1)])
+                
+                if len(df_injection_found) > 0:
+                    df_injection = df_injection_found
+                    print(f"  Prepared {len(df_injection)} interactions from {len(items_to_inject)} extra items (PROTECTED).")
+                else:
+                    print("  Could not find valid interactions for extra items. Dropping saturated users...")
+                    # Si no podemos inyectar, debemos limpiar df_sample
+                    current_items_count = df_sample['item_id:token'].nunique()
+                    user_counts_check = df_sample['user_id:token'].value_counts()
+                    
+                    saturated_users = user_counts_check[user_counts_check >= current_items_count].index
+                    
+                    if len(saturated_users) > 0:
+                        df_sample = df_sample[~df_sample['user_id:token'].isin(saturated_users)]
+                        print(f"  Dropped {len(saturated_users)} users who had interacted with ALL items.")
+                    else:
+                        print("  No saturated users found (check logic).")
         # 5. Ajuste Fino al Target
-        current_interactions = len(df_sample)
-        print(f"Interactions after filtering: {current_interactions}")
+        total_available = len(df_sample) + len(df_injection)
+        print(f"Interactions available: {total_available} (Core: {len(df_sample)}, Injected: {len(df_injection)})")
         
-        if current_interactions > target_interactions:
-            # Si nos pasamos, hacemos un sample aleatorio simple para llegar al número exacto
-            # Esto mantiene la distribución general pero clava el número
-            df_final = df_sample.sample(n=target_interactions, random_state=seed)
+        if total_available > target_interactions:
+            # Debe samplear para reducir a las cantidad pedida de interacciones
+            needed_from_core = target_interactions - len(df_injection) # Si inyectamos interacciones, las mantenemos
+            if needed_from_core > 0:
+                # Sampleamos solo del core
+                df_core_sampled = df_sample.sample(n=needed_from_core, random_state=seed)
+                # Unimos core sampleado + inyección completa
+                df_final = pd.concat([df_core_sampled, df_injection])
+            else:
+                # La inyección es más grande que el target total
+                df_final = df_injection.sample(n=target_interactions, random_state=seed)
         else:
-            # Si nos faltan, es difícil "inventar". 
-            # Opción A: Aceptar menos.
-            # Opción B (Implementada): Avisar y devolver lo que hay.
             # Para arreglar esto en el futuro, habría que aumentar el factor de seguridad inicial (1.1 -> 1.3)
-            print(f"Warning: Could not reach {target_interactions}, got {current_interactions}. (Try increasing source pool)")
-            df_final = df_sample
+            print(f"Warning: Could not reach {target_interactions}, got {total_available}. (Try increasing source pool)")
+            df_final = pd.concat([df_sample, df_injection])
             
         # --- FINALIZACIÓN Y GUARDADO ---
         final_users = df_final['user_id:token'].nunique()
