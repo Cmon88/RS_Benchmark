@@ -5,13 +5,10 @@ import pandas as pd
 import os
 import glob
 import argparse
-from run_recbole_group import run_group_benchmark
 
 def consolidate_results(dataset_name, output_suffix=""):
     """Consolidar todos los resultados de grupos en archivos finales"""
     
-
-
     # Buscar todos los archivos CSV del benchmark
     valid_csv_files = glob.glob(f"./latex/valid_{dataset_name}_group*.csv")
     test_csv_files = glob.glob(f"./latex/test_{dataset_name}_group*.csv")
@@ -66,19 +63,22 @@ def generate_final_latex(df, output_file, caption_prefix):
     
     # Crear LaTeX manualmente con highlighting
     latex_content = f"""\\begin{{table}}
-\\caption{{{caption_prefix} Results - All Models}}
+\\caption{{{caption_prefix} Results - {dataset_name}}}
 \\label{{{caption_prefix.lower()}_results}}
 \\begin{{tabular}}{{{'l' + 'c' * len(metric_columns)}}}
 \\toprule
 Model & {' & '.join(metric_columns)} \\\\
 \\midrule
 """
-    
+    lower_is_better = ['rmse', 'mae', 'logloss']
     # Encontrar los mejores valores para cada métrica
     best_values = {}
     for metric in metric_columns:
         if metric in df.columns:
-            best_values[metric] = df[metric].max()
+            if metric.lower() in lower_is_better:
+                best_values[metric] = df[metric].min()
+            else:
+                best_values[metric] = df[metric].max()
     
     # Generar filas para cada modelo
     for _, row in df.iterrows():
@@ -110,72 +110,72 @@ Model & {' & '.join(metric_columns)} \\\\
 general_models = ['Pop', 'BPR', 'FISM', 'ItemKNN', 'CDAE', 'DMF', 'NeuMF', 'NNCF', 'ConvNCF', 'GCMC', 'MultiDAE', 'MultiVAE', 'SpectralCF', 'EASE', 'MacridVAE', 'NCEPLRec', 'NGCF', 'DGCF', 'ENMF', 'LightGCN', 'RecVAE', 'SGL', 'SimpleX', 'LDiffRec']
 #general_models = ['BPR']  # Para pruebas
 
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Run general benchmark')
+parser.add_argument('--dataset', type=str, default='ml-1m', help='Dataset name')
+parser.add_argument('--config', type=str, default='test_dense.yaml', help='Config file path')
+args = parser.parse_args()
+
+dataset_name = args.dataset
+config_file = args.config
+
 
 # Cargar configuración de muestreo
-def load_sampling_config(config_path):
+def load_sampling_config(config_path='test_dense.yaml'):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
+        print(f"Order config: {config.get('eval_args', {}).get('order', 'N/A')}")
         return config.get('sampling', {'enabled': False, 'n_samples': 1})
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run benchmark')
-    parser.add_argument('--dataset', type=str, default='ml-100k', help='Dataset name')
-    parser.add_argument('--config', type=str, default='test.yaml', help='Config file path')
-    args = parser.parse_args()
+sampling_config = load_sampling_config(config_file)
 
-    dataset_name = args.dataset
-    config_file = args.config
+# Split models into groups
+group_size = 2
+model_groups = [general_models[i:i + group_size] for i in range(0, len(general_models), group_size)]
+times = []
 
-    sampling_config = load_sampling_config(config_file)
+print(f"Sampling configuration: {sampling_config}")
+if sampling_config['enabled']:
+    print(f"Running {sampling_config['n_samples']} samples per model")
+    
 
-    # Split models into groups
-    group_size = 2
-    model_groups = [general_models[i:i + group_size] for i in range(0, len(general_models), group_size)]
-    times = []
+os.makedirs('./latex', exist_ok=True)
 
-    print(f"Sampling configuration: {sampling_config}")
-    if sampling_config['enabled']:
-        print(f"Running {sampling_config['n_samples']} samples per model")
-        print(f"{sampling_config.get('target_users', 'N/A')} users, {sampling_config.get('target_items', 'N/A')} items")
-
-    os.makedirs('./latex', exist_ok=True)
-
-    # Execute the benchmark for each group
-    for idx, group in enumerate(model_groups):
-        output_suffix = f"_group{idx+1}"
-        start_time = time.time()
-        # Entrenar grupo de modelos
-        run_group_benchmark(
-            model_list=group,
-            dataset=dataset_name,
-            config_file_list=[config_file],  # Debe ser una lista
-            output_suffix=output_suffix
-        )
-        end_time = time.time()
-        # Print the elapsed time for the group
-        print(f"Group {idx+1} benchmark time: {end_time - start_time:.2f} seconds")
-        times.append(end_time - start_time)
+# Execute the benchmark for each group
+for idx, group in enumerate(model_groups):
+    general_list = ",".join(group)
+    output_suffix = f"_group{idx+1}"
+    command = f"python run_recbole_group.py --model_list={general_list} --dataset={dataset_name} --config_files={config_file} --output_suffix={output_suffix}"
+    
+    # Measure execution time
+    start_time = time.time()
+    subprocess.run(command, shell=True, check=True)
+    end_time = time.time()
+    
+    # Print the elapsed time for the group
+    print(f"Group {idx+1} benchmark time: {end_time - start_time:.2f} seconds")
+    times.append(end_time - start_time)
 
 
-    # Consolidar todos los resultados al final
-    print("\nConsolidating all results...")
-    consolidate_results(dataset_name, "_benchmark")
+# Consolidar todos los resultados al final
+print("\nConsolidating all results...")
+consolidate_results(dataset_name, "_benchmark")
 
-    print("\nSummary")
-    print("=======")
-    print(f"General Models: {len(general_models)}")
-    print(f"Sampling: {'Enabled' if sampling_config['enabled'] else 'Disabled'}")
-    if sampling_config['enabled']:
-        print(f"Samples per model: {sampling_config['n_samples']}")
-        print(f"{sampling_config.get('target_users')} users, {sampling_config.get('target_items')} items")
-        print(f"Total runs: {len(general_models) * sampling_config['n_samples']}")
-        
-    for group, t in enumerate(times):
-        print(f"Group {group+1} Time: {t:.2f} seconds")
-    print(f"Total Time: {sum(times):.2f} seconds")
+print("\nSummary")
+print("=======")
+print(f"General Models: {len(general_models)}")
+print(f"Sampling: {'Enabled' if sampling_config['enabled'] else 'Disabled'}")
+if sampling_config['enabled']:
+    print(f"Samples per model: {sampling_config['n_samples']}")
+    print(f"{sampling_config.get('target_users')} users, {sampling_config.get('target_items')} items")
+    print(f"Total runs: {len(general_models) * sampling_config['n_samples']}")
+    
+for group, t in enumerate(times):
+    print(f"Group {group+1} Time: {t:.2f} seconds")
+print(f"Total Time: {sum(times):.2f} seconds")
 
-    print(f"\nFinal results saved in:")
-    print(f"- ./latex/final_valid_{dataset_name}_benchmark.tex")
-    print(f"- ./latex/final_test_{dataset_name}_benchmark.tex")
-    print(f"- ./latex/final_valid_{dataset_name}_benchmark.csv") 
-    print(f"- ./latex/final_test_{dataset_name}_benchmark.csv")
+print(f"\nFinal results saved in:")
+print(f"- ./latex/final_valid_{dataset_name}_benchmark.tex")
+print(f"- ./latex/final_test_{dataset_name}_benchmark.tex")
+print(f"- ./latex/final_valid_{dataset_name}_benchmark.csv") 
+print(f"- ./latex/final_test_{dataset_name}_benchmark.csv")

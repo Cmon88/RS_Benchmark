@@ -20,10 +20,14 @@ def create_interaction_based_subsamples(dataset_name, target_interactions, n_sam
     df = pd.read_csv(original_path, sep='\t')
     
     # Estadísticas originales para estimación inicial
-    avg_inter_per_user = len(df) / df['user_id:token'].nunique()
+    n_users_orig = df['user_id:token'].nunique()
+    n_items_orig = df['item_id:token'].nunique()
+    orig_density = len(df) / (n_users_orig * n_items_orig)
+    avg_inter_per_user = len(df) / n_users_orig
     
     print(f"=== Creating Interaction-Targeted Subsamples for {dataset_name} ===")
     print(f"Target Interactions: {target_interactions}")
+    print(f"Original Density: {orig_density:.4%}")
     print(f"Avg interactions/user (original): {avg_inter_per_user:.2f}")
 
     sampled_base_dir = f'./dataset_sampled'

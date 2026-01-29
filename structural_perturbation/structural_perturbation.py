@@ -11,6 +11,7 @@ from scipy.sparse import csr_matrix, lil_matrix, diags
 from scipy.sparse.linalg import svds
 from sklearn.metrics import mean_squared_error
 import time
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def sample_zero_forever(mat):
@@ -218,6 +219,7 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
     rmse_values = []
     rmse_svd_values = []
     s_distance_values = []
+    spectral_similarity_values = []
 
     for i in range(n_iterations):
         # Prepare sampling probabilities based on timestamps
@@ -315,16 +317,31 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
         # Calculate spectral distance
         lambda_true = Sigma.diagonal()
         lambda_approx = Sigma_tilde.diagonal()
+
+        # Sort singular values descending to ensure correct comparison
+        lambda_true = np.sort(lambda_true)[::-1]
+        lambda_approx = np.sort(lambda_approx)[::-1]
+
+        # Cosine similarity
+        spec_sim = cosine_similarity(lambda_true.reshape(1, -1), lambda_approx.reshape(1, -1))[0, 0]
+        spectral_similarity_values.append(spec_sim)
+
         # Avoid division by zero
-        with np.errstate(divide='ignore', invalid='ignore'):
-            relative_errors = np.abs(lambda_true - lambda_approx) / lambda_true
-            relative_errors[lambda_true == 0] = 0 # Handle zero singular values if any
+        relative_errors = np.abs(lambda_true - lambda_approx)
             
         s_distance = np.mean(relative_errors)
         s_distance_values.append(s_distance)
 
         # Perform standard SVD on M for normalization
         U_M, Sigma_M, Vt_M = svds(M, k=n_components)
+
+        # Sort components by singular value descending (svds order is not guaranteed)
+        # We must permute U and Vt accordingly to maintain the factorization
+        sort_idx = np.argsort(Sigma_M)[::-1]
+        Sigma_M = Sigma_M[sort_idx]
+        U_M = U_M[:, sort_idx]
+        Vt_M = Vt_M[sort_idx, :]
+
         Sigma_M_diag = Sigma_M
 
         # Calculate RMSE for standard SVD
@@ -347,8 +364,10 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
     std_s_distance = np.std(s_distance_values) if s_distance_values else 0.0
     average_rmse_svd = np.mean(rmse_svd_values) if rmse_svd_values else 0.0
     std_rmse_svd = np.std(rmse_svd_values) if rmse_svd_values else 0.0
+    average_spectral_similarity = np.mean(spectral_similarity_values) if spectral_similarity_values else 0.0
+    std_spectral_similarity = np.std(spectral_similarity_values) if spectral_similarity_values else 0.0
 
-    return average_rmse, std_rmse, average_s_distance, std_s_distance, average_rmse_svd, std_rmse_svd
+    return average_rmse, std_rmse, average_s_distance, std_s_distance, average_rmse_svd, std_rmse_svd, average_spectral_similarity, std_spectral_similarity
 
 
 def main():

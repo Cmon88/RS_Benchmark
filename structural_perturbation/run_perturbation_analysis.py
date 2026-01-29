@@ -63,7 +63,7 @@ def main():
             if not time_sampling:
                 print("  -> Aviso: No se encontró columna 'timestamp'. Usando muestreo uniforme.")
             # Ejecutar el análisis de perturbación estructural
-            rmse, std_rmse, s_distance, std_s_distance, rmse_svd, std_rmse_svd = \
+            rmse, std_rmse, s_distance, std_s_distance, rmse_svd, std_rmse_svd, spectral_similarity, std_spectral_similarity = \
                 analytical_structural_perturbation_v2(
                     df,
                     p=p,
@@ -78,6 +78,8 @@ def main():
                 'Structural Perturbation RMSE': rmse,
                 'Spectral Distance': s_distance,
                 'Standard SVD RMSE': rmse_svd,
+                'Spectral Similarity': spectral_similarity
+
             })
 
             # Mostrar resultados para el dataset actual
@@ -88,6 +90,7 @@ def main():
             print(f"  Spectral Distance:            {s_distance:.4f} ± {std_s_distance:.4f}")
             print(f"  Standard SVD RMSE:            {rmse_svd:.4f} ± {std_rmse_svd:.4f}")
             print(f"  Normalized RMSE:              {(rmse / rmse_svd if rmse_svd > 0 else float('inf')):.4f}")
+            print(f"  Spectral Similarity:          {spectral_similarity:.4f} ± {std_spectral_similarity:.4f}")
             print()
 
         except Exception as e:

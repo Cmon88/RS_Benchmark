@@ -121,4 +121,5 @@ Los resultados finales se guardan en la carpeta latex:
 Los datos utilizados son los entregados por RecBole en su [Drive](https://drive.google.com/drive/folders/1ahiLmzU7cGRPXf5qGMqtAChte2eYp9gI),  ya formateados en su propia estructura. \
 
 Para utilizarlos basta descargar los .inter del dataset y dejarlo en su directorio propio en el directorio `dataset`. \
-Por ejemplo: `dataset/ml-100k/ml-100k.inter`
+Por ejemplo: `dataset/ml-100k/ml-100k.inter`\
+Algunos datasets les puede faltar la columna `Timestamp`, en dichos casos para utilizar Time Ordering necesitara agregarla.
