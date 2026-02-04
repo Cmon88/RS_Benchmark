@@ -228,13 +228,13 @@ def analytical_structural_perturbation_v2(train_df, p=0.1, n_iterations=1,
         if time_sampling and 'timestamp' in df_random.columns:
             try:
                 timestamps = df_random['timestamp'].astype('int64')
-                # Normalizar para evitar problemas de escala
+                # Normalize to avoid scaling problems
                 min_t, max_t = timestamps.min(), timestamps.max()
                 if max_t > min_t:
                     normalized_timestamps = (timestamps - min_t) / (max_t - min_t + 1e-9)
                     probabilities = normalized_timestamps / normalized_timestamps.sum()
             except Exception:
-                # Si falla la conversión (ej. formato fecha string), usar uniforme
+                # If conversion fails (e.g. date string format), use uniform
                 probabilities = None
 
         # Sample and permute ratings (value perturbation)
@@ -409,7 +409,8 @@ def main():
         print(f"Configuration {i}: p={params['p']}, alpha={params['alpha']}, "
               f"time_sampling={params['time_sampling']}, n_components={params['n_components']}")
 
-        rmse, std, s_dist, std_s, rmse_svd, std_svd = \
+        # Unpack the 8 return values (ignoring the last 2: spectral similarity stats)
+        rmse, std, s_dist, std_s, rmse_svd, std_svd, _, _ = \
             analytical_structural_perturbation_v2(df, **params, n_iterations=3)
 
         print(f"  Structural Perturbation RMSE: {rmse:.4f} ± {std:.4f}")

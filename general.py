@@ -7,16 +7,16 @@ import glob
 import argparse
 
 def consolidate_results(dataset_name, output_suffix=""):
-    """Consolidar todos los resultados de grupos en archivos finales"""
+    """Consolidate all group results into final files"""
     
-    # Buscar todos los archivos CSV del benchmark
+    # Find all benchmark CSV files
     valid_csv_files = glob.glob(f"./latex/valid_{dataset_name}_group*.csv")
     test_csv_files = glob.glob(f"./latex/test_{dataset_name}_group*.csv")
     
     all_valid_results = []
     all_test_results = []
     
-    # Consolidar resultados de validación
+    # Consolidate validation results
     for csv_file in valid_csv_files:
         try:
             df = pd.read_csv(csv_file)
@@ -24,7 +24,7 @@ def consolidate_results(dataset_name, output_suffix=""):
         except Exception as e:
             print(f"Error reading {csv_file}: {e}")
     
-    # Consolidar resultados de test
+    # Consolidate test results
     for csv_file in test_csv_files:
         try:
             df = pd.read_csv(csv_file)
@@ -32,14 +32,14 @@ def consolidate_results(dataset_name, output_suffix=""):
         except Exception as e:
             print(f"Error reading {csv_file}: {e}")
     
-    # Combinar todos los resultados
+    # Combine all results
     if all_valid_results:
         final_valid_df = pd.concat(all_valid_results, ignore_index=True)
         final_valid_file = f"./latex/final_valid_{dataset_name}{output_suffix}.csv"
         final_valid_df.to_csv(final_valid_file, index=False)
         print(f"Consolidated validation results: {final_valid_file}")
         
-        # Generar LaTeX con highlighting entre todos los modelos
+        # Generate LaTeX with highlighting across all models
         generate_final_latex(final_valid_df, f"./latex/final_valid_{dataset_name}{output_suffix}.tex", "Validation")
     
     if all_test_results:
@@ -48,20 +48,20 @@ def consolidate_results(dataset_name, output_suffix=""):
         final_test_df.to_csv(final_test_file, index=False)
         print(f"Consolidated test results: {final_test_file}")
         
-        # Generar LaTeX con highlighting entre todos los modelos
+        # Generate LaTeX with highlighting across all models
         generate_final_latex(final_test_df, f"./latex/final_test_{dataset_name}{output_suffix}.tex", "Test")
 
 
 def generate_final_latex(df, output_file, caption_prefix):
-    """Generar archivo LaTeX final con highlighting entre todos los modelos"""
+    """Generate final LaTeX file with highlighting across all models"""
     
     if df.empty:
         return
     
-    # Identificar columnas de métricas (todas excepto 'Model')
+    # Identify metric columns (all except 'Model')
     metric_columns = [col for col in df.columns if col != 'Model']
     
-    # Crear LaTeX manualmente con highlighting
+    # Manually create LaTeX with highlighting
     latex_content = f"""\\begin{{table}}
 \\caption{{{caption_prefix} Results - {dataset_name}}}
 \\label{{{caption_prefix.lower()}_results}}
@@ -71,7 +71,7 @@ Model & {' & '.join(metric_columns)} \\\\
 \\midrule
 """
     lower_is_better = ['rmse', 'mae', 'logloss']
-    # Encontrar los mejores valores para cada métrica
+    # Find the best values for each metric
     best_values = {}
     for metric in metric_columns:
         if metric in df.columns:
@@ -80,7 +80,7 @@ Model & {' & '.join(metric_columns)} \\\\
             else:
                 best_values[metric] = df[metric].max()
     
-    # Generar filas para cada modelo
+    # Generate rows for each model
     for _, row in df.iterrows():
         model_name = row['Model']
         metric_values = []
@@ -88,7 +88,7 @@ Model & {' & '.join(metric_columns)} \\\\
         for metric in metric_columns:
             if metric in row:
                 value = row[metric]
-                # Formatear valor y agregar negrita si es el mejor
+                # Format value and add bold if it is the best
                 formatted_value = f"{value:.4f}"
                 if value == best_values.get(metric):
                     formatted_value = f"\\bfseries {formatted_value}"
@@ -100,7 +100,7 @@ Model & {' & '.join(metric_columns)} \\\\
 \\end{tabular}
 \\end{table}"""
     
-    # Guardar archivo LaTeX
+    # Save LaTeX file
     with open(output_file, "w") as f:
         f.write(latex_content)
     
@@ -108,7 +108,7 @@ Model & {' & '.join(metric_columns)} \\\\
 
 # General parameters
 general_models = ['Pop', 'BPR', 'FISM', 'ItemKNN', 'CDAE', 'DMF', 'NeuMF', 'NNCF', 'ConvNCF', 'GCMC', 'MultiDAE', 'MultiVAE', 'SpectralCF', 'EASE', 'MacridVAE', 'NCEPLRec', 'NGCF', 'DGCF', 'ENMF', 'LightGCN', 'RecVAE', 'SGL', 'SimpleX', 'LDiffRec']
-#general_models = ['BPR']  # Para pruebas
+#general_models = ['BPR']  # For testing
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Run general benchmark')
@@ -120,7 +120,7 @@ dataset_name = args.dataset
 config_file = args.config
 
 
-# Cargar configuración de muestreo
+# Load sampling configuration
 def load_sampling_config(config_path='test_dense.yaml'):
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -157,7 +157,7 @@ for idx, group in enumerate(model_groups):
     times.append(end_time - start_time)
 
 
-# Consolidar todos los resultados al final
+# Consolidate all results at the end
 print("\nConsolidating all results...")
 consolidate_results(dataset_name, "_benchmark")
 

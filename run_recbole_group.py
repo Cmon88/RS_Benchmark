@@ -2,6 +2,7 @@
 # @Author : Gaowei Zhang
 # @Email  : zgw2022101006@ruc.edu.cn
 
+### Modified from RecBole's run_recbole_group.py to add sampling support and save train splits, and others features ###
 
 import argparse
 from recbole.quick_start import run
@@ -17,31 +18,31 @@ import os
 
 def save_train_split(dataset_obj, dataset_name):
     """
-    Guarda el split de entrenamiento como archivo .inter.
-    Solo lo guarda si no existe previamente, asumiendo consistencia por seed.
+    Saves the training split as a .inter file.
+    Only saves it if it doesn't exist previously, assuming consistency via seed.
     """
     save_dir = 'train_splits'
     os.makedirs(save_dir, exist_ok=True)
     file_path = os.path.join(save_dir, f'{dataset_name}_train.inter')
     
-    # Si ya existe, asumimos que es el mismo split (gracias a init_seed) y saltamos
+    # If it already exists, we assume it is the same split (thanks to init_seed) and skip
     if os.path.exists(file_path):
         return
 
     try:
         df = pd.DataFrame()
-        # RecBole almacena las columnas en inter_feat
+        # RecBole stores columns in inter_feat
         for field in dataset_obj.inter_feat:
             ids = dataset_obj.inter_feat[field]
             
-            # Intentar recuperar los tokens originales (ej. user_id original string en vez de entero interno)
-            # Esto hace que el archivo sea portable y legible
+            # Try to recover original tokens (e.g., original user_id string instead of internal integer)
+            # This makes the file portable and readable
             if field in dataset_obj.field2id_token:
                 try:
                     tokens = dataset_obj.id2token(field, ids)
                     df[field] = tokens
                 except:
-                    # Fallback a IDs internos si falla
+                    # Fallback to internal IDs if it fails
                     if hasattr(ids, 'numpy'):
                         df[field] = ids.numpy()
                     else:
@@ -58,7 +59,7 @@ def save_train_split(dataset_obj, dataset_name):
         print(f"Error saving train split: {e}")
 
 def load_sampling_config(config_files):
-    """Cargar configuracion de muestreo desde archivos YAML"""
+    """Load sampling configuration from YAML files"""
     sampling_config = {
         'enabled': False,
         'n_samples': 1,
@@ -75,13 +76,13 @@ def load_sampling_config(config_files):
     return sampling_config
 
 def save_averages_to_csv(result_list, filename, subset_columns):
-    """Guardar promedios en CSV para consolidación posterior"""
+    """Save averages to CSV for later consolidation"""
     if result_list:
-        # Filtrar solo los promedios
+        # Filter only averages
         averages = [res for res in result_list if res.get('Sample') == 'Average']
         if averages:
             df = pd.DataFrame(averages)
-            # Reordenar columnas: Model primero, luego métricas
+            # Reorder columns: Model first, then metrics
             columns = ['Model'] + [col for col in subset_columns if col in df.columns]
             df = df[columns]
             df.to_csv(filename, index=False)
@@ -134,16 +135,16 @@ if __name__ == "__main__":
         args.config_files.strip().split(" ") if args.config_files else None
     )
     dataset = args.dataset.strip()
-    # Archivos para este grupo
+    # Files for this group
     valid_file = f"./latex/valid_{dataset}{args.output_suffix}.tex"
     test_file = f"./latex/test_{dataset}{args.output_suffix}.tex"
-    # Archivos CSV para consolidación
+    # CSV files for consolidation
     valid_csv_group = f"./latex/valid_{dataset}{args.output_suffix}.csv"
     test_csv_group = f"./latex/test_{dataset}{args.output_suffix}.csv"
     error_dir = './errors'
     os.makedirs(error_dir, exist_ok=True)
 
-    # Cargar configuración de muestreo
+    # Load sampling configuration
     sampling_config = load_sampling_config(config_file_list)
     print(f"Sampling config: {sampling_config}")
 
@@ -166,15 +167,15 @@ if __name__ == "__main__":
         model_valid_results = []
         model_test_results = []
 
-        # Ejecutar múltiples muestras si el muestreo está habilitado
+        # Run multiple samples if sampling is enabled
         n_samples = sampling_config['n_samples'] if sampling_config['enabled'] else 1
         
         for sample_idx in range(n_samples):
             print(f"  Sample {sample_idx+1}/{n_samples}")
 
-            # Configuracion especifica para esta muestra
+            # Specific configuration for this sample
             sample_config_dict = {}
-            dataset_to_use = dataset        # Por defecto usar el dataset original
+            dataset_to_use = dataset        # Default to using original dataset
 
             if sampling_config['enabled']:
                 dataset_to_use = f'{dataset}_sample{sample_idx+1}'
@@ -185,9 +186,9 @@ if __name__ == "__main__":
             valid_res_dict = {"Model": model, "Sample": sample_idx+1}
             test_res_dict = {"Model": model, "Sample": sample_idx+1}
             
-            # Ejecutar el modelo
+            # Run the model
             try:
-                # Cargar configuracion
+                # Load configuration
                 config = Config(
                     model=model,
                     dataset=dataset_to_use,
@@ -195,64 +196,64 @@ if __name__ == "__main__":
                     config_dict=sample_config_dict
                 )
                 init_seed(config['seed'], config['reproducibility'])
-                # Preparar datos
+                # Prepare data
                 dataset_obj = create_dataset(config)
                 train_data, valid_data, test_data = data_preparation(config, dataset_obj)
-                # Guardar split de entrenamiento (se ejecutará solo la primera vez por dataset/sample)
+                # Save training split (will run only the first time per dataset/sample)
                 save_train_split(train_data.dataset, dataset_to_use)
-                # Iniciar modelo
+                # Initialize model
                 model_obj = get_model(config['model'])(config, train_data.dataset).to(config['device'])
-                # Iniciar Trainer
+                # Initialize Trainer
                 trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model_obj)
-                # Entrenar
+                # Train
                 best_valid_score, best_valid_result = trainer.fit(
                     train_data, valid_data, saved=True, show_progress=True
                 )
-                # Evaluar: Metricas de ranking
+                # Evaluate: Ranking metrics
                 test_result_ranking = trainer.evaluate(test_data, load_best_model=True, show_progress=True)
 
-                # Evaluar : Metricas de Valor
+                # Evaluate: Value Metrics
                 with open('test_rmse.yaml', 'r') as f:
                     rmse_yaml_config = yaml.safe_load(f)
-                # Combinamos la config de muestreo actual con la de RMSE
+                # Combine current sampling config with RMSE config
                 rmse_config_dict = sample_config_dict.copy()
                 rmse_config_dict.update(rmse_yaml_config)
 
-                # Copiamos los argumentos de evaluación originales para mantener el split
+                # Copy original evaluation arguments to maintain split
                 if 'eval_args' not in rmse_config_dict:
                     rmse_config_dict['eval_args'] = config['eval_args'].copy()
                 
                 rmse_config_dict['eval_args'].update({
-                    'group_by': None,      # No agrupar por usuario
-                    'order': 'RO',         # Orden aleatorio (no importa en labeled)
-                    'mode': 'uni100'      # Modo Point-wise (necesario para regresión/RMSE)
+                    'group_by': None,      # Do not group by user
+                    'order': 'RO',         # Random order (doesn't matter in labeled)
+                    'mode': 'uni100'       # Point-wise mode (necessary for regression/RMSE)
                 })
                 rmse_config_dict['metrics'] = ['RMSE']
                 
-                # Crear NUEVOS objetos Config y Dataset
+                # Create NEW Config and Dataset objects
                 config_rmse = Config(
                     model=model,
                     dataset=dataset_to_use,
                     config_file_list=config_file_list,
                     config_dict=rmse_config_dict
                 )
-                # Reiniciar semilla
+                # Reset seed
                 init_seed(config_rmse['seed'], config_rmse['reproducibility'])
-                # Crear dataset limpio y dataloaders
+                # Create clean dataset and dataloaders
                 dataset_rmse = create_dataset(config_rmse)
                 _, _, test_data_rmse = data_preparation(config_rmse, dataset_rmse)
-                # Nuevo Trainer con el modelo YA ENTRENADO
+                # New Trainer with ALREADY TRAINED model
                 trainer_rmse = get_trainer(config_rmse['MODEL_TYPE'], config_rmse['model'])(config_rmse, model_obj)
-                # Usar el NUEVO dataloader (test_data_rmse)
+                # Use NEW dataloader (test_data_rmse)
                 test_result_rmse = trainer_rmse.evaluate(test_data_rmse, load_best_model=False, show_progress=True)
                 print(f"    RMSE: Result: {test_result_rmse}")
-                # Combinar resultados de test
+                # Combine test results
                 final_test_result = test_result_ranking.copy()
                 final_test_result.update(test_result_rmse)
                 valid_res_dict.update(best_valid_result)
                 test_res_dict.update(final_test_result)
                 bigger_flag = config['valid_metric_bigger']
-                subset_columns = list(best_valid_result.keys()) # Usamos métricas de validación para ordenar columnas
+                subset_columns = list(best_valid_result.keys()) # Use validation metrics to sort columns
                 for k in final_test_result.keys():
                     if k not in subset_columns:
                         subset_columns.append(k)
@@ -260,7 +261,7 @@ if __name__ == "__main__":
                 model_valid_results.append(valid_res_dict)
                 model_test_results.append(test_res_dict)
                 
-                # Borra el modelo guardado para liberar espacio
+                # Delete saved model to free up space
                 if hasattr(trainer, 'saved_model_file') and trainer.saved_model_file:
                     if os.path.exists(trainer.saved_model_file):
                         try:
@@ -269,7 +270,7 @@ if __name__ == "__main__":
                         except OSError as e:
                             print(f"Error deleting model file: {e}")
 
-                # Borra los objetos para liberar memoria
+                # Delete objects to free up memory
                 del model_obj
                 del trainer
                 del trainer_rmse
@@ -302,10 +303,10 @@ if __name__ == "__main__":
                 torch.cuda.synchronize()
             gc.collect()
 
-        # Calcular promedios si se usó muestreo
+        # Calculate averages if sampling was used
         if len(model_valid_results)>0:
             if n_samples > 1:
-                # Calcular promedio de metricas
+                # Calculate average of metrics
                 avg_valid = {"Model": model, "Sample": "Average"}
                 avg_test = {"Model": model, "Sample": "Average"}
 
@@ -321,7 +322,7 @@ if __name__ == "__main__":
                 valid_result_list.append(avg_valid)
                 test_result_list.append(avg_test)
             else:
-                # Si solo hay una muestra, usar esa directamente como "promedio"
+                # If there is only one sample, use it directly as "average"
                 single_valid = model_valid_results[0].copy()
                 single_valid['Sample'] = 'Average'
                 single_test = model_test_results[0].copy()
@@ -329,13 +330,13 @@ if __name__ == "__main__":
                 valid_result_list.append(single_valid)
                 test_result_list.append(single_test)
 
-    # Guardar resultados en LaTeX y CSV
+    # Save results in LaTeX and CSV
     if valid_result_list:
-        # Filtrar solo promedios para LaTeX
+        # Filter only averages for LaTeX
         avg_valid_list = [res for res in valid_result_list if res.get('Sample') == 'Average']
         avg_test_list = [res for res in test_result_list if res.get('Sample') == 'Average']
         if avg_valid_list:
-            # evitar rmse pues no se uso en validacion
+            # avoid rmse as it was not used in validation
             valid_keys = set().union(*(d.keys() for d in avg_valid_list))
             valid_subset = [col for col in subset_columns if col in valid_keys]
 
@@ -356,6 +357,6 @@ if __name__ == "__main__":
                 f.write(tex_valid)
             with open(test_file, "w") as f:
                 f.write(tex_test)
-            # Guardar también en CSV para consolidación
+            # Also save in CSV for consolidation
             save_averages_to_csv(valid_result_list, valid_csv_group, subset_columns)
             save_averages_to_csv(test_result_list, test_csv_group, subset_columns)

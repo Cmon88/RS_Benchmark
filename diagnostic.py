@@ -28,7 +28,7 @@ if __name__ == "__main__":
     
     dataset_name = args.dataset
     n_samples = args.n_samples
-    # Analizar dataset original
+    # Analyze the original dataset
     original_path = f'dataset/{dataset_name}/{dataset_name}.inter'
     if os.path.exists(original_path):
         m1 = pd.read_csv(original_path, sep='\t')
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     else:
         print(f"Original dataset not found at {original_path}")
 
-    # Comparativa con ml-100k (referencia fija)
+    # Comparison with ml-100k (fixed reference)
     if os.path.exists('dataset/ml-100k/ml-100k.inter'):
         k100 = pd.read_csv('dataset/ml-100k/ml-100k.inter', sep='\t')
         usersk = k100['user_id:token'].nunique()
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         print(f"Items with <1 interactions: {(item_counts < 1).sum()}")
         print(f"Density: {interactions/(usersk*itemsk)*100:.2f}%")
 
-    # Analizar samples generados
+    # Analyze generated samples
     for i in range(n_samples):
         sample_path = f'./dataset_sampled/{dataset_name}_sample{i+1}/{dataset_name}_sample{i+1}.inter'
         if os.path.exists(sample_path):

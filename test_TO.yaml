@@ -18,7 +18,7 @@ metrics: ['MRR','NDCG', 'Precision','Recall']
 topk: 10
 valid_metric: MRR@10
 metric_decimal_place: 4
-# 'null' le indica a RecBole que cargue TODAS las columnas disponibles en el archivo .inter
+# 'null' indicates to RecBole to load ALL available columns in the .inter file
 load_col: null 
 # Sampling config
 sampling:
@@ -26,7 +26,5 @@ sampling:
     n_samples: 3
     random_seed: 42
     target_interactions: 100000
-    #target_users: 900    # 100 usuarios máximo
-    #target_items: 5000      # 250 items máximo
-    min_items_per_user: 4  # Al menos 2 items por usuario
-    min_total_items: 10     # Al menos 6 items en total
+    min_items_per_user: 4  # At least x items per user
+    min_total_items: 10     # At least x items in total
