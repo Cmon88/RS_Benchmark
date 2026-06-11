@@ -213,3 +213,6 @@ saved/
 log/
 log_tensorboard/
 
+train_splits/
+train_splits_100k/
+train_splits_50k/

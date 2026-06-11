@@ -29,7 +29,7 @@ if __name__ == "__main__":
     dataset_name = args.dataset
     n_samples = args.n_samples
     # Analyze the original dataset
-    original_path = f'dataset/{dataset_name}/{dataset_name}.inter'
+    original_path = f'../dataset/{dataset_name}/{dataset_name}.inter'
     if os.path.exists(original_path):
         m1 = pd.read_csv(original_path, sep='\t')
         usersm = m1['user_id:token'].nunique()
@@ -49,8 +49,8 @@ if __name__ == "__main__":
         print(f"Original dataset not found at {original_path}")
 
     # Comparison with ml-100k (fixed reference)
-    if os.path.exists('dataset/ml-100k/ml-100k.inter'):
-        k100 = pd.read_csv('dataset/ml-100k/ml-100k.inter', sep='\t')
+    if os.path.exists('../dataset/ml-100k/ml-100k.inter'):
+        k100 = pd.read_csv('../dataset/ml-100k/ml-100k.inter', sep='\t')
         usersk = k100['user_id:token'].nunique()
         itemsk= k100['item_id:token'].nunique()
         interactions = len(k100)
@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
     # Analyze generated samples
     for i in range(n_samples):
-        sample_path = f'./dataset_sampled/{dataset_name}_sample{i+1}/{dataset_name}_sample{i+1}.inter'
+        sample_path = f'../dataset_sampled/{dataset_name}_sample{i+1}/{dataset_name}_sample{i+1}.inter'
         if os.path.exists(sample_path):
             analyze_subsample(sample_path, f"{dataset_name}_sample{i+1}")
         else:

@@ -6,114 +6,57 @@ import os
 import glob
 import argparse
 
-def consolidate_results(dataset_name, output_suffix=""):
+def consolidate_results(dataset_name, output_suffix="", results_dir="./latex"):
     """Consolidate all group results into final files"""
-    
-    # Find all benchmark CSV files
-    valid_csv_files = glob.glob(f"./latex/valid_{dataset_name}_group*.csv")
-    test_csv_files = glob.glob(f"./latex/test_{dataset_name}_group*.csv")
-    
+
+    valid_csv_files = glob.glob(os.path.join(results_dir, f"valid_{dataset_name}_group*.csv"))
+    test_csv_files = glob.glob(os.path.join(results_dir, f"test_{dataset_name}_group*.csv"))
+
     all_valid_results = []
     all_test_results = []
-    
-    # Consolidate validation results
+
     for csv_file in valid_csv_files:
         try:
-            df = pd.read_csv(csv_file)
-            all_valid_results.append(df)
+            all_valid_results.append(pd.read_csv(csv_file))
         except Exception as e:
             print(f"Error reading {csv_file}: {e}")
-    
-    # Consolidate test results
+
     for csv_file in test_csv_files:
         try:
-            df = pd.read_csv(csv_file)
-            all_test_results.append(df)
+            all_test_results.append(pd.read_csv(csv_file))
         except Exception as e:
             print(f"Error reading {csv_file}: {e}")
-    
-    # Combine all results
+
     if all_valid_results:
         final_valid_df = pd.concat(all_valid_results, ignore_index=True)
-        final_valid_file = f"./latex/final_valid_{dataset_name}{output_suffix}.csv"
+        final_valid_file = os.path.join(results_dir, f"final_valid_{dataset_name}{output_suffix}.csv")
         final_valid_df.to_csv(final_valid_file, index=False)
         print(f"Consolidated validation results: {final_valid_file}")
-        
-        # Generate LaTeX with highlighting across all models
-        generate_final_latex(final_valid_df, f"./latex/final_valid_{dataset_name}{output_suffix}.tex", "Validation")
-    
+        for f in valid_csv_files:
+            os.remove(f)
+
     if all_test_results:
         final_test_df = pd.concat(all_test_results, ignore_index=True)
-        final_test_file = f"./latex/final_test_{dataset_name}{output_suffix}.csv"
+        final_test_file = os.path.join(results_dir, f"final_test_{dataset_name}{output_suffix}.csv")
         final_test_df.to_csv(final_test_file, index=False)
         print(f"Consolidated test results: {final_test_file}")
-        
-        # Generate LaTeX with highlighting across all models
-        generate_final_latex(final_test_df, f"./latex/final_test_{dataset_name}{output_suffix}.tex", "Test")
+        for f in test_csv_files:
+            os.remove(f)
 
 
-def generate_final_latex(df, output_file, caption_prefix):
-    """Generate final LaTeX file with highlighting across all models"""
-    
-    if df.empty:
-        return
-    
-    # Identify metric columns (all except 'Model')
-    metric_columns = [col for col in df.columns if col != 'Model']
-    
-    # Manually create LaTeX with highlighting
-    latex_content = f"""\\begin{{table}}
-\\caption{{{caption_prefix} Results - {dataset_name}}}
-\\label{{{caption_prefix.lower()}_results}}
-\\begin{{tabular}}{{{'l' + 'c' * len(metric_columns)}}}
-\\toprule
-Model & {' & '.join(metric_columns)} \\\\
-\\midrule
-"""
-    lower_is_better = ['rmse', 'mae', 'logloss']
-    # Find the best values for each metric
-    best_values = {}
-    for metric in metric_columns:
-        if metric in df.columns:
-            if metric.lower() in lower_is_better:
-                best_values[metric] = df[metric].min()
-            else:
-                best_values[metric] = df[metric].max()
-    
-    # Generate rows for each model
-    for _, row in df.iterrows():
-        model_name = row['Model']
-        metric_values = []
-        
-        for metric in metric_columns:
-            if metric in row:
-                value = row[metric]
-                # Format value and add bold if it is the best
-                formatted_value = f"{value:.4f}"
-                if value == best_values.get(metric):
-                    formatted_value = f"\\bfseries {formatted_value}"
-                metric_values.append(formatted_value)
-        
-        latex_content += f"{model_name} & {' & '.join(metric_values)} \\\\\n"
-    
-    latex_content += """\\bottomrule
-\\end{tabular}
-\\end{table}"""
-    
-    # Save LaTeX file
-    with open(output_file, "w") as f:
-        f.write(latex_content)
-    
-    print(f"Generated final LaTeX: {output_file}")
 
 # General parameters
-general_models = ['Pop', 'BPR', 'FISM', 'ItemKNN', 'CDAE', 'DMF', 'NeuMF', 'NNCF', 'ConvNCF', 'GCMC', 'MultiDAE', 'MultiVAE', 'SpectralCF', 'EASE', 'MacridVAE', 'NCEPLRec', 'NGCF', 'DGCF', 'ENMF', 'LightGCN', 'RecVAE', 'SGL', 'SimpleX', 'LDiffRec']
-#general_models = ['BPR']  # For testing
+# general_models = ['Pop', 'BPR', 'FISM', 'ItemKNN', 'CDAE', 'DMF', 'NeuMF', 'NNCF', 'ConvNCF', 'GCMC', 'MultiDAE', 'MultiVAE', 'SpectralCF', 'EASE', 'MacridVAE', 'NCEPLRec', 'NGCF', 'DGCF', 'ENMF', 'LightGCN', 'RecVAE', 'SGL', 'SimpleX', 'LDiffRec']
+general_models = ['EASE', 'SGL', 'MultiDAE', 'DGCF', 'RecVAE', 'FISM','LightGCN', 'CDAE', 'DMF', 'NeuMF']
+# general_models = ['SGL', 'MultiDAE', 'EASE', 'RecVAE', 'FISM','LightGCN', 'CDAE', 'DMF', 'NeuMF']
+# general_models = ['BPR', 'LightGCN']  # For testing
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Run general benchmark')
 parser.add_argument('--dataset', type=str, default='ml-1m', help='Dataset name')
 parser.add_argument('--config', type=str, default='test_dense.yaml', help='Config file path')
+parser.add_argument('--data-path', type=str, default=None, help='Override data path for sampled datasets')
+parser.add_argument('--results-dir', type=str, default='./latex', help='Directory to write result CSV files')
 args = parser.parse_args()
 
 dataset_name = args.dataset
@@ -139,27 +82,33 @@ if sampling_config['enabled']:
     print(f"Running {sampling_config['n_samples']} samples per model")
     
 
-os.makedirs('./latex', exist_ok=True)
+results_dir = args.results_dir
+os.makedirs(results_dir, exist_ok=True)
 
 # Execute the benchmark for each group
+models_done = 0
 for idx, group in enumerate(model_groups):
     general_list = ",".join(group)
     output_suffix = f"_group{idx+1}"
-    command = f"python run_recbole_group.py --model_list={general_list} --dataset={dataset_name} --config_files={config_file} --output_suffix={output_suffix}"
-    
-    # Measure execution time
+    command = f"python run_recbole_group.py --model_list={general_list} --dataset={dataset_name} --config_files={config_file} --output_suffix={output_suffix} --results_dir={results_dir}"
+    if args.data_path:
+        command += f" --data_path={args.data_path}"
+
+    print(f"\n[{models_done+1}-{min(models_done+len(group), len(general_models))}/{len(general_models)}] Running models: {group}")
+
     start_time = time.time()
     subprocess.run(command, shell=True, check=True)
     end_time = time.time()
-    
-    # Print the elapsed time for the group
-    print(f"Group {idx+1} benchmark time: {end_time - start_time:.2f} seconds")
+
+    models_done += len(group)
+    remaining = len(general_models) - models_done
+    print(f"  Done in {end_time - start_time:.2f}s — {remaining} model(s) remaining")
     times.append(end_time - start_time)
 
 
 # Consolidate all results at the end
 print("\nConsolidating all results...")
-consolidate_results(dataset_name, "_benchmark")
+consolidate_results(dataset_name, "_benchmark", results_dir=results_dir)
 
 print("\nSummary")
 print("=======")
@@ -175,7 +124,5 @@ for group, t in enumerate(times):
 print(f"Total Time: {sum(times):.2f} seconds")
 
 print(f"\nFinal results saved in:")
-print(f"- ./latex/final_valid_{dataset_name}_benchmark.tex")
-print(f"- ./latex/final_test_{dataset_name}_benchmark.tex")
-print(f"- ./latex/final_valid_{dataset_name}_benchmark.csv") 
-print(f"- ./latex/final_test_{dataset_name}_benchmark.csv")
+print(f"- {results_dir}/final_valid_{dataset_name}_benchmark.csv")
+print(f"- {results_dir}/final_test_{dataset_name}_benchmark.csv")
